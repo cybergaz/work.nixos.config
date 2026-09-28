@@ -26,27 +26,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # No `hyprland` input: modules/desktop.nix's `programs.hyprland.enable` installs
-    # `pkgs.hyprland` and that is the session the display manager launches, so pulling a
-    # second Hyprland from its own flake only invites the two to drift. They did -- the
-    # flake was pinned to v0.55.4 while nixpkgs moved to 0.56.2, hyprscape was compiled
-    # against the pin, and the resulting .so failed to dlopen into the running compositor
-    # (`undefined symbol: CMonitor::changeWorkspace`, since 0.56 moved CMonitor into
-    # `namespace Monitor`). A plugin that cannot load registers none of its config keys,
-    # so every `plugin:hyprscape:*` line then read as "unknown config key".
-    #
-    # hyprtasking went with it: its pinned rev only builds against v0.55.4, so it cannot
-    # survive the pin's removal. To bring it back, add its input plus a Hyprland matching
-    # whatever rev it targets, and read the ABI note in home/hyprland.nix first.
-
+    # niri-style zoom-out overview built for the scrolling layout, which is what
     hyprscape = {
-      # niri-style zoom-out overview built for the scrolling layout, which is what
-      # home/hypr/50-look-and-feel.lua sets. Unlike hyprtasking it has no grid: one row
-      # per real workspace, windows at their true scroll-tape positions.
-      #
-      # Local checkout for now. It exposes lib.mkHyprscape rather than a prebuilt package,
-      # because a Hyprland plugin has to be compiled against the exact Hyprland below --
-      # see home/hyprland.nix.
       url = "git+file:///home/gaz/workspace/cpp/hyprscape";
       inputs.nixpkgs.follows = "nixpkgs";
     };
