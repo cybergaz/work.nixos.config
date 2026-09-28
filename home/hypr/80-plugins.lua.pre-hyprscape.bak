@@ -1,0 +1,42 @@
+-- Plugin configuration and binds.
+-- The plugin .so itself is loaded by `hl.plugin.load(...)`, which Home Manager
+-- emits at the top of hyprland.lua from `wayland.windowManager.hyprland.plugins`.
+
+local v   = require("00-vars")
+local mod = v.mod
+
+--------------------------------------------------------------------
+-- hyprtasking - workspace overview
+-- https://github.com/raybbian/hyprtasking
+--------------------------------------------------------------------
+
+-- hyprtasking registers itself with Hyprland's Lua API, so its dispatchers are
+-- reachable as `hl.plugin.hyprtasking.<name>(arg)`:
+--   toggle("all" | "cursor")   move(dir)        movewindow(dir)
+--   killhovered()              setlayer(name)   setlayerwindow(name)
+--   if_active(cmd)             if_not_active(cmd)     is_active() -> bool
+--
+-- These run immediately when called; they do NOT return a dispatcher object.
+-- So they must be wrapped in a function -- `hl.bind` accepts a plain Lua
+-- function as its action, which is exactly what we want here.
+hl.bind(mod .. " + U", function()
+    hl.plugin.hyprtasking.toggle("all")
+end)
+
+-- NOTE on plugin settings: `hl.plugin.load()` only *records* the path; the
+-- plugin is not dlopen'd until the whole config script has finished, so its
+-- `plugin:hyprtasking:*` keys do not exist on the first pass. Setting them here
+-- makes Hyprland report "unknown config key", then load the plugin, clear the
+-- error overlay and re-parse -- harmless but noisy, and `--verify-config` will
+-- always flag it. We run hyprtasking on its stock defaults, so there is
+-- nothing to set. To tune it, uncomment and expect that first-pass warning:
+--
+-- hl.config({
+--     plugin = {
+--         hyprtasking = {
+--             layout   = "grid",       -- grid | linear
+--             gap_size = 8,
+--             grid     = { rows = 3, cols = 3 },
+--         },
+--     },
+-- })

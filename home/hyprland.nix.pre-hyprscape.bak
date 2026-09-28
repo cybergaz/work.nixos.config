@@ -1,0 +1,35 @@
+{ pkgs, inputs, lib, ... }:
+let
+  system = pkgs.stdenv.hostPlatform.system;
+  hyprtasking = inputs.hyprtasking.packages.${system}.hyprtasking;
+
+  # Every ./hypr/*.lua file becomes $XDG_CONFIG_HOME/hypr/<name>.lua.
+  # All of them are `require`d from the generated hyprland.lua, in sorted
+  # order, except 00-vars which is a helper module the others import.
+  luaModules = lib.mapAttrs' (
+    file: _:
+    lib.nameValuePair (lib.removeSuffix ".lua" file) {
+      content = ./hypr/${file};
+      autoLoad = file != "00-vars.lua";
+    }
+  ) (lib.filterAttrs (n: t: t == "regular" && lib.hasSuffix ".lua" n) (builtins.readDir ./hypr));
+in
+{
+  wayland.windowManager.hyprland = {
+    enable = true;
+    package = inputs.hyprland.packages.${system}.hyprland;
+    portalPackage = inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland;
+
+    # Hyprland 0.55 added a Lua config front-end alongside hyprlang, and
+    # prefers hyprland.lua over hyprland.conf when both exist. Home Manager
+    # writes the Lua entrypoint and the module files, and emits a
+    # `hl.plugin.load(...)` call per plugin at the top of it -- which is the
+    # native load the old `plugin = ` keyword used to give us, so plugin
+    # dispatchers exist before the rest of the config is evaluated.
+    configType = "lua";
+
+    plugins = [ hyprtasking ];
+
+    extraLuaFiles = luaModules;
+  };
+}
