@@ -1,6 +1,11 @@
 # cybergaz-workstation — machine-specific configuration.
 # Shared config comes from ../../modules (imported by the flake).
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   imports = [ ./hardware-configuration.nix ];
 
@@ -145,6 +150,8 @@
     gnomeExtensions.blur-my-shell
     gnomeExtensions.just-perfection
     gnomeExtensions.arc-menu
+
+    vlc
   ];
 
   services.displayManager.gdm.enable = false;
@@ -158,6 +165,18 @@
   environment.gnome.excludePackages = with pkgs; [
     gnome-tour
     gnome-user-docs
+  ];
+
+  security.sudo.extraRules = [
+    {
+      users = [ "gaz" ];
+      commands = [
+        {
+          command = "/run/current-system/sw/bin/systemctl restart bluetooth";
+          options = [ "NOPASSWD" ];
+        }
+      ];
+    }
   ];
 
   # GNOME enables ibus by default, which exports GTK/QT_IM_MODULE=ibus into

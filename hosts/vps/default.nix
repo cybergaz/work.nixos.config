@@ -41,7 +41,7 @@
     enable = true;
     network.enable = true;
   };
-  networking.firewall.enable = true; # only port 22 (opened by openssh)
+  networking.firewall.enable = true; # port 22 (openssh) plus 80/443 for nginx, below
 
   # ------------------------------------------------------------------------
   # SSH — keys or password, no root login.
@@ -132,16 +132,21 @@
   };
 
   # ------------------------------------------------------------------------
-  # Dataroom — xegality-server in its dataroom role (case-law search over the
-  # court corpus above) and the query-embedding sidecar it calls. Both listen
-  # on loopback only; nginx is the only way in.
+  # The platform: Bun (xegality-backend, :4000 + Socket.IO :4001), xegality-server
+  # (vault, workflows and the court-corpus dataroom, :4100) and the query-embedding
+  # sidecar (:4200). Bun and the server call each other on loopback; nginx is the
+  # only way in (the firewall keeps 4000/4001 closed although Bun binds 0.0.0.0).
   #
   # Deploying a new server build, from the workstation:
   #   nix build <xegality-rs>#xegality-server
   #   nix copy --to ssh-ng://xegality-vps ./result
   #   ssh xegality-vps sudo nix-env -p /nix/var/nix/profiles/xegality-server --set "$(readlink -f result)"
-  #   ssh xegality-vps sudo systemctl restart xegality-dataroom
+  #   ssh xegality-vps sudo systemctl restart xegality-server
   # Rolling back: sudo nix-env -p /nix/var/nix/profiles/xegality-server --rollback, then restart.
+  #
+  # Deploying Bun, on the VPS:
+  #   cd ~/xegality-backend && git pull && bun install --frozen-lockfile
+  #   sudo systemctl restart xegality-backend
   # ------------------------------------------------------------------------
   # uv's own CPython and the onnxruntime / numpy / tokenizers wheels are
   # ordinary Linux binaries; nix-ld gives them the loader and libraries they expect.
@@ -172,8 +177,8 @@
     };
   };
 
-  systemd.services.xegality-dataroom = {
-    description = "xegality-server, dataroom role";
+  systemd.services.xegality-server = {
+    description = "xegality-server: vault, workflows and the dataroom";
     after = [
       "network-online.target"
       "postgresql.service"
@@ -183,32 +188,118 @@
     requires = [ "postgresql.service" ];
     wantedBy = [ "multi-user.target" ];
     environment = {
-      XEGALITY_ROLE = "dataroom";
+      XEGALITY_ROLE = "full";
       XEGALITY_HTTP_ADDR = "127.0.0.1:4100";
       XEGALITY_HTTP_CORS_ALLOWED_ORIGINS = "https://xegality.com,https://www.xegality.com";
       XEGALITY_LOG_FORMAT = "json";
+      # Workflow steps whose domains Bun still owns (drafts, Xegality AI, clients, cases).
+      XEGALITY_BUN_URL = "http://127.0.0.1:4000";
       XEGALITY_DATAROOM_MODE = "local";
+      # Case law from Indian Kanoon (text only, no PDFs); its key is in server.env.
+      XEGALITY_DATAROOM_PROVIDER = "indian_kanoon";
       # Unix socket + peer auth: OS user xegality connects as role courtdb, no password.
       XEGALITY_DATAROOM_DB_URL = "postgres://courtdb@localhost/courtdb?host=/run/postgresql";
       XEGALITY_DATAROOM_EMBED_URL = "http://127.0.0.1:4200";
-      # Required by the server's config parsing but never used: the dataroom
-      # role runs no vault ingestion, so there is nothing to store or embed.
-      AWS_S3_BUCKET_NAME = "unused-in-dataroom-role";
-      AWS_ACCESS_KEY_ID = "unused";
-      AWS_SECRET_ACCESS_KEY = "unused";
-      GEMINI_API_KEY = "unused";
     };
     serviceConfig = {
       User = "xegality";
       ExecStart = "/nix/var/nix/profiles/xegality-server/bin/xegality-server";
-      # DB_URL (the platform database, for login checks) and ACCESS_KEY (the
-      # key Bun signs logins with). Read by systemd as root; keep it 0600.
-      EnvironmentFile = "/etc/xegality/dataroom.env";
+      # DB_URL (sslmode=verify-full), ACCESS_KEY, AWS_*, GEMINI_API_KEY,
+      # GOOGLE_CREDENTIALS and INDIAN_KANOON_API_KEY, copied from Bun's .env by ./set-server-secrets.sh.
+      # Read by systemd as root; keep it 0600.
+      EnvironmentFile = "/etc/xegality/server.env";
       Restart = "on-failure";
       RestartSec = 5;
       LimitNOFILE = 65536;
     };
   };
+
+  systemd.services.xegality-backend = {
+    description = "xegality-backend (Bun): the platform API and Socket.IO";
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    wantedBy = [ "multi-user.target" ];
+    environment = {
+      NODE_ENV = "production";
+      # nginx sends the API to SERVER_PORT and /socket.io/ to SOCKET_PORT. These
+      # win over the clone's .env, which holds everything else (dotenv, from cwd).
+      SERVER_PORT = "4000";
+      SOCKET_PORT = "4001";
+      VAULT_URL = "http://127.0.0.1:4100";
+      # Prebuilt addons (canvas, keccak, secp256k1) link these; nixpkgs' Bun has no /lib to search.
+      LD_LIBRARY_PATH = lib.makeLibraryPath [
+        pkgs.stdenv.cc.cc.lib
+        pkgs.libuuid
+      ];
+    };
+    serviceConfig = {
+      User = "xegality";
+      WorkingDirectory = "/home/xegality/xegality-backend";
+      ExecStart = "${pkgs.bun}/bin/bun src/server.ts";
+      Restart = "on-failure";
+      RestartSec = 5;
+      LimitNOFILE = 65536;
+    };
+  };
+
+  # ------------------------------------------------------------------------
+  # Public entry — nginx with a Let's Encrypt certificate for apiv2.xegality.com,
+  # the whole platform API. The vault, workflows and dataroom go to xegality-server,
+  # /socket.io/ to Bun's Socket.IO port, everything else to Bun. Health probes and
+  # the embedding sidecar stay on loopback. The Cloudflare record is "DNS only",
+  # so Let's Encrypt's HTTP-01 check reaches this box directly.
+  # ------------------------------------------------------------------------
+  services.nginx = {
+    enable = true;
+    recommendedProxySettings = true;
+    recommendedTlsSettings = true;
+    recommendedOptimisation = true;
+    recommendedGzipSettings = true;
+    virtualHosts."apiv2.xegality.com" = {
+      enableACME = true;
+      forceSSL = true;
+      # Uploads (vault files, drafts, media).
+      extraConfig = "client_max_body_size 50m;";
+      # Unbuffered with a long read timeout: /api/vault/events and /api/assistant/events are
+      # Server-Sent Events streams.
+      locations."~ ^/api/(vault|workflows|assistant)(/|$)" = {
+        proxyPass = "http://127.0.0.1:4100";
+        extraConfig = ''
+          proxy_buffering off;
+          proxy_read_timeout 1h;
+        '';
+      };
+      locations."/api/dataroom/" = {
+        proxyPass = "http://127.0.0.1:4100";
+        extraConfig = ''
+          # Judgment PDFs stream through the server from the public bucket; pass them on as they
+          # arrive instead of holding each one here.
+          proxy_buffering off;
+          proxy_read_timeout 60s;
+          client_max_body_size 1m;
+        '';
+      };
+      # Engine-only callbacks into Bun; xegality-server calls Bun on loopback, never through here.
+      locations."/api/internal/".return = "404";
+      locations."/socket.io/" = {
+        proxyPass = "http://127.0.0.1:4001";
+        proxyWebsockets = true;
+        extraConfig = "proxy_read_timeout 1h;";
+      };
+      locations."/" = {
+        proxyPass = "http://127.0.0.1:4000";
+        proxyWebsockets = true;
+      };
+    };
+  };
+  security.acme = {
+    acceptTerms = true;
+    defaults.email = "xegalitylegalai@gmail.com";
+  };
+  networking.firewall.allowedTCPPorts = [
+    80
+    443
+  ];
 
   # ------------------------------------------------------------------------
   # Small-RAM tuning

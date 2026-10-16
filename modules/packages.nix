@@ -87,6 +87,7 @@
     code-cursor
     nil
     nixfmt
+    redis
 
     telegram-desktop
     discord

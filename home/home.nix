@@ -50,6 +50,41 @@
     };
   };
 
+  xdg.desktopEntries.alacritty-neovim = {
+    name = "Neovim";
+    genericName = "Text Editor";
+    comment = "Edit text files";
+    exec = "alacritty -t alacritty_float_wide -e nvim %F";
+    icon = "nvim";
+    terminal = false;
+    categories = [
+      "Utility"
+      "TextEditor"
+      "Development"
+    ];
+    mimeType = [
+      "text/plain"
+      "application/vnd.exstream-package"
+      "text/english"
+      "text/x-makefile"
+      "text/x-c++hdr"
+      "text/x-c++src"
+      "text/x-chdr"
+      "text/x-csrc"
+      "text/x-java"
+      "text/x-moc"
+      "text/x-pascal"
+      "text/x-tcl"
+      "text/x-tex"
+      "application/x-shellscript"
+      "text/x-c"
+      "text/x-c++"
+    ];
+    settings = {
+      TryExec = "alacritty";
+    };
+  };
+
   programs = {
 
     # basic configuration of git, please change to your own
